@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\QuickFIXn\QuickFix.csproj" />
+    <ProjectReference Include="..\..\Messages\FIX50SP2\QuickFix.FIX50SP2.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\spec\fix\FIX50SP2.xml" Link="spec\FIX50SP2.xml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\spec\fix\FIXT11.xml" Link="spec\FIXT11.xml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
