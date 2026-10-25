@@ -3,4 +3,9 @@
   <PropertyGroup>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
+
+  <!-- Fork: the throughput benchmark drives a Session directly, which needs internal constructors. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'QuickFix'">
+    <InternalsVisibleTo Include="Throughput" />
+  </ItemGroup>
 </Project>

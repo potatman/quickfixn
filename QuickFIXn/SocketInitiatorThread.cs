@@ -19,12 +19,13 @@ public class SocketInitiatorThread : IResponder
     public Transport.SocketInitiator Initiator { get; }
     public ILogger NonSessionLog { get; }
 
-    public const int BUF_SIZE = 512;
+    public const int BUF_SIZE = 4096;
 
     private Thread? _thread;
     private readonly byte[] _readBuffer = new byte[BUF_SIZE];
     private readonly Parser _parser = new();
     private Stream? _stream;
+    private Transport.BatchingStreamWriter? _writer;
     private readonly CancellationTokenSource _readCancellationTokenSource = new();
     private readonly IPEndPoint _socketEndPoint;
     private readonly SocketSettings _socketSettings;
@@ -72,6 +73,8 @@ public class SocketInitiatorThread : IResponder
         Debug.Assert(_stream == null);
 
         _stream = SetupStream();
+        if (_socketSettings.SocketSendBatching)
+            _writer = new Transport.BatchingStreamWriter(_stream, Session.Log);
         Session.SetResponder(this);
     }
 
@@ -183,14 +186,19 @@ public class SocketInitiatorThread : IResponder
             throw new ApplicationException("Initiator is not connected (uninitialized stream)");
         }
 
+        if (_writer is not null)
+            return _writer.Send(data);
+
         using ValueDisposable _ = CharEncoding.GetBytes(data, out ReadOnlySpan<byte> rawData);
         _stream.Write(rawData);
-
         return true;
     }
 
     public void Disconnect()
     {
+        // flush anything queued (e.g. a Logout) before the stream goes away
+        _writer?.Close(TimeSpan.FromSeconds(2));
+
         _readCancellationTokenSource.Cancel();
         _readCancellationTokenSource.Dispose();
 

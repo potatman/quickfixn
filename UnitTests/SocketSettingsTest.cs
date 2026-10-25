@@ -104,4 +104,18 @@ public class SocketSettingsTest
         Assert.That(socketSettings.ValidateCertificates, Is.False);
         Assert.That(socketSettings.CheckCertificateRevocation, Is.False);
     }
+
+    [Test]
+    public void Configure_SocketSendBatching()
+    {
+        SocketSettings defaults = new SocketSettings();
+        defaults.Configure(new SettingsDictionary());
+        Assert.That(defaults.SocketSendBatching, Is.True);
+
+        SettingsDictionary dict = new SettingsDictionary();
+        dict.SetBool(SessionSettings.SOCKET_SEND_BATCHING, false);
+        SocketSettings disabled = new SocketSettings();
+        disabled.Configure(dict);
+        Assert.That(disabled.SocketSendBatching, Is.False);
+    }
 }

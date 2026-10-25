@@ -67,6 +67,7 @@ public class SessionSettings
     public const string SOCKET_SEND_TIMEOUT = "SocketSendTimeout";
     public const string SOCKET_RECEIVE_TIMEOUT = "SocketReceiveTimeout";
     public const string SOCKET_COUNT_PER_HOST = "SocketCountPerHost";
+    public const string SOCKET_SEND_BATCHING = "SocketSendBatching";
     public const string IGNORE_POSSDUP_RESEND_REQUESTS = "IgnorePossDupResendRequests";
     public const string RESETSEQUENCE_MESSAGE_REQUIRES_ORIGSENDINGTIME = "RequiresOrigSendingTime";
     public const string CHECK_LATENCY = "CheckLatency";

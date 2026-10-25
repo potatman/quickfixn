@@ -64,6 +64,12 @@ public class SocketSettings : ICloneable
     public int? SocketCountPerHost { get; internal set; }
 
     /// <summary>
+    /// If true (the default), outgoing messages are queued and written by a dedicated thread,
+    /// coalescing whatever is pending into one socket write. If false, each message is written synchronously.
+    /// </summary>
+    public bool SocketSendBatching { get; internal set; } = true;
+
+    /// <summary>
     /// Gets a value that specifies whether the proxy server settings should be ignored.
     /// </summary>
     /// <value>
@@ -190,6 +196,9 @@ public class SocketSettings : ICloneable
 
         if (settingsDictionary.Has(SessionSettings.SOCKET_COUNT_PER_HOST))
             SocketCountPerHost = settingsDictionary.GetInt(SessionSettings.SOCKET_COUNT_PER_HOST);
+
+        if (settingsDictionary.Has(SessionSettings.SOCKET_SEND_BATCHING))
+            SocketSendBatching = settingsDictionary.GetBool(SessionSettings.SOCKET_SEND_BATCHING);
 
         if (settingsDictionary.Has(SessionSettings.SOCKET_SEND_TIMEOUT))
             SocketSendTimeout = settingsDictionary.GetInt(SessionSettings.SOCKET_SEND_TIMEOUT);

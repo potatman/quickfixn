@@ -16,7 +16,7 @@ namespace Throughput;
 ///   recv  raw TCP server floods pre-encoded messages into a QuickFIXn initiator (isolates the receive path)
 ///   e2e   QuickFIXn acceptor sends to a QuickFIXn initiator (send + receive paths)
 ///
-/// Usage: Throughput [recv|e2e] [--messages N] [--store memory|file] [--log null|file] [--validate Y|N]
+/// Usage: Throughput [recv|e2e|stages] [--messages N] [--store memory|file] [--log null|file] [--validate Y|N] [--batching Y|N]
 /// </summary>
 public static class Program
 {
@@ -26,7 +26,7 @@ public static class Program
     public static int Main(string[] args)
     {
         Options opt = Options.Parse(args);
-        Console.WriteLine($"mode={opt.Mode} messages={opt.Messages:N0} store={opt.Store} log={opt.Log} validate={opt.Validate}");
+        Console.WriteLine($"mode={opt.Mode} messages={opt.Messages:N0} store={opt.Store} log={opt.Log} validate={opt.Validate} batching={opt.Batching}");
 
         string workDir = Path.Combine(Path.GetTempPath(), "qfn-throughput-" + Environment.ProcessId);
         Directory.CreateDirectory(workDir);
@@ -191,15 +191,83 @@ public static class Program
             for (int i = 0; i < n; i++)
                 built[i & 1023].ConstructString();
         });
+
+        // Whole inbound path minus the socket: Session.Next(string) on a logged-on initiator session
+        SessionSettings settings = ClientSettings(opt with { Store = "memory" }, Path.GetTempPath(), port: 1);
+        SessionID sessionId = settings.GetSessions().First();
+        Session? session = null;
+        Stage("session (Session.Next)", n, () =>
+        {
+            for (int i = 0; i < n; i++)
+                session!.Next(msgs[i]);
+        }, setup: () =>
+        {
+            session?.Dispose();
+            session = new SessionFactory(new CountingApp(n), new MemoryStoreFactory()).Create(sessionId, settings.Get(sessionId));
+            session.SetResponder(new NullResponder());
+            session.Next(); // sends our Logon
+            Message logonReply = new();
+            logonReply.Header.SetField(new MsgType(MsgType.LOGON));
+            logonReply.SetField(new EncryptMethod(0));
+            logonReply.SetField(new HeartBtInt(30));
+            logonReply.SetField(new ResetSeqNumFlag(true));
+            logonReply.SetField(new DefaultApplVerID(ApplVerID.FIX50SP2));
+            SetHeader(logonReply, 1);
+            session.Next(logonReply.ConstructString());
+            if (!session.IsLoggedOn)
+                throw new InvalidOperationException("session did not log on");
+        });
+        // Outbound: building an application message, then Session.Send minus the socket
+        Stage("create (new MDIR)", n, () =>
+        {
+            for (int i = 0; i < n; i++)
+                built[i & 1023] = CreateMarketData(i);
+        });
+
+        Stage("send (Session.Send)", n, () =>
+        {
+            for (int i = 0; i < n; i++)
+                session!.Send(built[i & 1023]);
+        }, setup: () =>
+        {
+            session?.Dispose();
+            session = new SessionFactory(new CountingApp(n), new MemoryStoreFactory()).Create(sessionId, settings.Get(sessionId));
+            session.SetResponder(new NullResponder());
+            session.Next();
+            session.Next(LogonReply());
+            for (int i = 0; i < built.Length; i++)
+                built[i] = CreateMarketData(i);
+        });
+        session?.Dispose();
     }
 
-    private static void Stage(string name, int n, Action action)
+    private static string LogonReply()
     {
+        Message logonReply = new();
+        logonReply.Header.SetField(new MsgType(MsgType.LOGON));
+        logonReply.SetField(new EncryptMethod(0));
+        logonReply.SetField(new HeartBtInt(30));
+        logonReply.SetField(new ResetSeqNumFlag(true));
+        logonReply.SetField(new DefaultApplVerID(ApplVerID.FIX50SP2));
+        SetHeader(logonReply, 1);
+        return logonReply.ConstructString();
+    }
+
+    private sealed class NullResponder : IResponder
+    {
+        public bool Send(string data) => true;
+        public void Disconnect() { }
+    }
+
+    private static void Stage(string name, int n, Action action, Action? setup = null)
+    {
+        setup?.Invoke();
         action(); // warm up
         double best = double.MaxValue;
         long alloc = 0;
         for (int run = 0; run < 5; run++) // best of 5, to filter out machine noise
         {
+            setup?.Invoke();
             GC.Collect();
             long before = GC.GetAllocatedBytesForCurrentThread();
             Stopwatch sw = Stopwatch.StartNew();
@@ -290,6 +358,7 @@ public static class Program
             HeartBtInt=30
             ResetOnLogon=Y
             UseDataDictionary={opt.Validate}
+            SocketSendBatching={opt.Batching}
             TransportDataDictionary={Path.Combine(spec, "FIXT11.xml")}
             AppDataDictionary={Path.Combine(spec, "FIX50SP2.xml")}
             FileStorePath={Path.Combine(workDir, side, "store")}
@@ -362,11 +431,11 @@ internal sealed class CountingApp : IApplication
     public void OnLogout(SessionID sessionId) { }
 }
 
-internal sealed record Options(string Mode, int Messages, string Store, string Log, string Validate)
+internal sealed record Options(string Mode, int Messages, string Store, string Log, string Validate, string Batching)
 {
     public static Options Parse(string[] args)
     {
-        Options o = new("recv", 200_000, "memory", "null", "Y");
+        Options o = new("recv", 200_000, "memory", "null", "Y", "Y");
         for (int i = 0; i < args.Length; i++)
         {
             o = args[i] switch
@@ -376,6 +445,7 @@ internal sealed record Options(string Mode, int Messages, string Store, string L
                 "--store" => o with { Store = args[++i] },
                 "--log" => o with { Log = args[++i] },
                 "--validate" => o with { Validate = args[++i] },
+                "--batching" => o with { Batching = args[++i] },
                 _ => throw new ArgumentException("unknown argument: " + args[i]),
             };
         }

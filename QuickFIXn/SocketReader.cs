@@ -17,6 +17,7 @@ public class SocketReader : IDisposable
     private readonly Parser _parser = new();
     private Session? _qfSession;
     private readonly Stream _stream;
+    private readonly Transport.BatchingStreamWriter? _writer;
     private readonly CancellationTokenSource _readCancellationTokenSource = new();
     private readonly TcpClient _tcpClient;
     private readonly ClientHandlerThread _responder;
@@ -42,6 +43,8 @@ public class SocketReader : IDisposable
         _acceptorDescriptor = acceptorDescriptor;
         _stream = Transport.StreamFactory.CreateServerStream(tcpClient, settings, loggerFactory);
         _nonSessionLog = loggerFactory.CreateNonSessionLogger<SocketReader>();
+        if (settings.SocketSendBatching)
+            _writer = new Transport.BatchingStreamWriter(_stream, _nonSessionLog);
     }
 
     public void Read()
@@ -271,9 +274,11 @@ public class SocketReader : IDisposable
 
     public int Send(string data)
     {
+        if (_writer is not null)
+            return _writer.Send(data) ? data.Length : 0;
+
         using ValueDisposable _ = CharEncoding.GetBytes(data, out ReadOnlySpan<byte> rawData);
         _stream.Write(rawData);
-
         return rawData.Length;
     }
 
@@ -289,6 +294,9 @@ public class SocketReader : IDisposable
         if (_disposed) return;
         if (disposing)
         {
+            // flush anything queued (e.g. a Logout) before the stream goes away
+            _writer?.Close(TimeSpan.FromSeconds(2));
+
             _readCancellationTokenSource.Cancel();
             _readCancellationTokenSource.Dispose();
 
