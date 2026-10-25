@@ -1,0 +1,6 @@
+<Project>
+  <!-- Fork: AnyCPU only. Imported after each csproj, so this overrides upstream's "AnyCPU;x64" without editing project files. -->
+  <PropertyGroup>
+    <Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+</Project>
