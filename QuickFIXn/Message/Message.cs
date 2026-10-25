@@ -7,6 +7,7 @@ using QuickFix.DataDictionary;
 using DD = QuickFix.DataDictionary.DataDictionary;
 using QuickFix.ObjectPooling;
 using System.IO;
+using System.Globalization;
 
 namespace QuickFix;
 
@@ -91,7 +92,7 @@ public class Message : FieldMap
     public static int ExtractFieldTag(string msgstr, int pos)
     {
         int tagend = msgstr.IndexOf('=', pos);
-        int tag = Convert.ToInt32(msgstr.Substring(pos, tagend - pos));
+        int tag = ParseTag(msgstr, pos, tagend);
         return tag;
     }
 
@@ -108,7 +109,7 @@ public class Message : FieldMap
         try
         {
             int tagend = msgstr.IndexOf('=', pos);
-            int tag = Convert.ToInt32(msgstr.Substring(pos, tagend - pos));
+            int tag = ParseTag(msgstr, pos, tagend);
             pos = tagend + 1;
             StringField field = new StringField(tag, msgstr.Substring(pos, dataLength));
 
@@ -141,7 +142,7 @@ public class Message : FieldMap
         try
         {
             int tagend = msgstr.IndexOf('=', pos);
-            int tag = Convert.ToInt32(msgstr.Substring(pos, tagend - pos));
+            int tag = ParseTag(msgstr, pos, tagend);
             pos = tagend + 1;
             int fieldvalend = msgstr.IndexOf(SOH, pos);
             StringField field =  new StringField(tag, msgstr.Substring(pos, fieldvalend - pos));
@@ -161,6 +162,15 @@ public class Message : FieldMap
         {
             throw new MessageParseError("Error at position (" + pos + ") while parsing msg (" + msgstr + ")", e);
         }
+    }
+
+    /// <summary>
+    /// Parse the tag number that spans [pos, tagend) without allocating a substring.
+    /// Same semantics as Convert.ToInt32(msgstr.Substring(pos, tagend - pos)).
+    /// </summary>
+    private static int ParseTag(string msgstr, int pos, int tagend)
+    {
+        return int.Parse(msgstr.AsSpan(pos, tagend - pos), NumberStyles.Integer, CultureInfo.CurrentCulture);
     }
 
     public static string ExtractBeginString(string msgstr)
@@ -410,12 +420,25 @@ public class Message : FieldMap
         int pos = 0;
         IFieldMapSpec? msgMap = null;
 
+        // Raw positions for validating BodyLength/CheckSum without re-serializing every field.
+        // Only usable when BeginString/BodyLength/CheckSum each appear exactly once.
+        int bodyStart = -1; // just past the BodyLength field
+        int checkSumStart = -1; // start of the CheckSum field, if it is the last field
+        int framingTagCount = 0; // occurrences of BeginString, BodyLength and CheckSum
+
         while (pos < msgstr.Length)
         {
+            int fieldStart = pos;
             int fieldTag = ExtractFieldTag(msgstr, pos);
             StringField f = fieldTag == Tags.XmlData
                 ? ExtractDataField(msgstr, Header.GetInt(Tags.XmlDataLen), ref pos)
                 : ExtractField(msgstr, ref pos);
+
+            if (f.Tag is Tags.BeginString or Tags.BodyLength or Tags.CheckSum)
+                framingTagCount++;
+            if (f.Tag == Tags.BodyLength)
+                bodyStart = pos;
+            checkSumStart = f.Tag == Tags.CheckSum ? fieldStart : -1;
 
             if (validate && (count < 3) && (Header.HEADER_FIELD_ORDER[count++] != f.Tag))
                 throw new InvalidMessage("Header fields out of order");
@@ -482,8 +505,27 @@ public class Message : FieldMap
 
         if (validate)
         {
-            Validate();
+            if (!ignoreBody && framingTagCount == 3 && bodyStart >= 0 && checkSumStart >= bodyStart && pos == msgstr.Length)
+                Validate(RawBodyLength(msgstr, bodyStart, checkSumStart), RawCheckSum(msgstr, checkSumStart));
+            else
+                Validate();
         }
+    }
+
+    /// <summary>
+    /// BodyLength as defined by the spec: byte count from after the BodyLength field up to the CheckSum field
+    /// </summary>
+    private static int RawBodyLength(string msgstr, int bodyStart, int checkSumStart)
+    {
+        return CharEncoding.ByteCount(msgstr.AsSpan(bodyStart, checkSumStart - bodyStart));
+    }
+
+    /// <summary>
+    /// CheckSum as defined by the spec: sum of all bytes before the CheckSum field, mod 256
+    /// </summary>
+    private static int RawCheckSum(string msgstr, int checkSumStart)
+    {
+        return CharEncoding.ByteSum(msgstr.AsSpan(0, checkSumStart)) % 256;
     }
 
     /// <summary>
@@ -584,6 +626,7 @@ public class Message : FieldMap
         int grpEntryDelimiterTag = groupSpec.Delim;
         int grpPos = pos;
         Group? grp = null; // the group entry being constructed
+        string? beginString = null, msgType = null; // looked up once, on the first entry
 
         while (pos < msgstr.Length)
         {
@@ -596,11 +639,11 @@ public class Message : FieldMap
                 if (grp is not null)
                 {
                     // We were already building an entry, so the delimiter means it's done.
-                    fieldMap.AddGroup(grp, false);
+                    fieldMap.AddGroup(grp, false, copy: false);
                 }
 
                 // Create a new group!
-                grp = msgFactory?.Create(ExtractBeginString(msgstr), GetMsgType(msgstr), grpNoFld.Tag)
+                grp = msgFactory?.Create(beginString ??= ExtractBeginString(msgstr), msgType ??= GetMsgType(msgstr), grpNoFld.Tag)
                     ?? new Group(grpNoFld.Tag, grpEntryDelimiterTag);
             }
             else if (!groupSpec.IsField(f.Tag))
@@ -608,7 +651,7 @@ public class Message : FieldMap
                 // This field is not in the group, thus the repeating group is done.
                 if (grp is not null)
                 {
-                    fieldMap.AddGroup(grp, false);
+                    fieldMap.AddGroup(grp, false, copy: false);
                 }
                 return grpPos;
             }
@@ -636,7 +679,7 @@ public class Message : FieldMap
             // rare situation: if message ends on an in-group field (which means it lacks a checksum),
             //   then this logic is needed here to actually write the group (because this loop won't run again)
             if (pos == msgstr.Length) {
-                fieldMap.AddGroup(grp, false);
+                fieldMap.AddGroup(grp, false, copy: false);
                 return pos;
             }
         }
@@ -656,15 +699,20 @@ public class Message : FieldMap
 
     public void Validate()
     {
+        Validate(BodyLength(), CheckSum());
+    }
+
+    private void Validate(int expectedBodyLength, int expectedCheckSum)
+    {
         try
         {
             int receivedBodyLength = Header.GetInt(Tags.BodyLength);
-            if (BodyLength() != receivedBodyLength)
-                throw new InvalidMessage("Expected BodyLength=" + BodyLength() + ", Received BodyLength=" + receivedBodyLength + ", Message.SeqNum=" + Header.GetULong(Tags.MsgSeqNum));
+            if (expectedBodyLength != receivedBodyLength)
+                throw new InvalidMessage("Expected BodyLength=" + expectedBodyLength + ", Received BodyLength=" + receivedBodyLength + ", Message.SeqNum=" + Header.GetULong(Tags.MsgSeqNum));
 
             int receivedCheckSum = Trailer.GetInt(Tags.CheckSum);
-            if (CheckSum() != receivedCheckSum)
-                throw new InvalidMessage("Expected CheckSum=" + CheckSum() + ", Received CheckSum=" + receivedCheckSum + ", Message.SeqNum=" + Header.GetULong(Tags.MsgSeqNum));
+            if (expectedCheckSum != receivedCheckSum)
+                throw new InvalidMessage("Expected CheckSum=" + expectedCheckSum + ", Received CheckSum=" + receivedCheckSum + ", Message.SeqNum=" + Header.GetULong(Tags.MsgSeqNum));
         }
         catch (FieldNotFoundException e)
         {

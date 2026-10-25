@@ -196,13 +196,19 @@ public static class Program
     private static void Stage(string name, int n, Action action)
     {
         action(); // warm up
-        GC.Collect();
-        long alloc = GC.GetAllocatedBytesForCurrentThread();
-        Stopwatch sw = Stopwatch.StartNew();
-        action();
-        sw.Stop();
-        alloc = GC.GetAllocatedBytesForCurrentThread() - alloc;
-        Console.WriteLine($"{name,-30} {sw.Elapsed.TotalNanoseconds / n,8:N0} ns/msg  {alloc / (double)n,8:N0} B/msg");
+        double best = double.MaxValue;
+        long alloc = 0;
+        for (int run = 0; run < 5; run++) // best of 5, to filter out machine noise
+        {
+            GC.Collect();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Stopwatch sw = Stopwatch.StartNew();
+            action();
+            sw.Stop();
+            alloc = GC.GetAllocatedBytesForCurrentThread() - before;
+            best = Math.Min(best, sw.Elapsed.TotalNanoseconds);
+        }
+        Console.WriteLine($"{name,-30} {best / n,8:N0} ns/msg  {alloc / (double)n,8:N0} B/msg");
     }
 
     #endregion

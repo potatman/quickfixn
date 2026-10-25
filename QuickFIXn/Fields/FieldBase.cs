@@ -15,7 +15,7 @@ public abstract class FieldBase<T> : IField
     private int _tag;
     private bool _changed;
     private string _stringVal; // field value (not tag) formatted for fix
-    private string _stringField; // field string e.g. tag=val (no SOH)
+    private string? _stringField; // field string e.g. tag=val (no SOH); built on first ToStringField()
 
     /// <summary>
     /// Constructs a new field with the specified tag and value
@@ -31,7 +31,7 @@ public abstract class FieldBase<T> : IField
         // We can't set these properly here because makeString() is abstract.
         // See https://stackoverflow.com/a/119543/650475
         _stringVal = "";
-        _stringField = "";
+        _stringField = null;
     }
 
     public T Value
@@ -67,7 +67,7 @@ public abstract class FieldBase<T> : IField
     {
         if (_changed)
             MakeStringFields();
-        return _stringField;
+        return _stringField ??= Tag + "=" + _stringVal;
     }
 
     /// <summary>
@@ -87,7 +87,14 @@ public abstract class FieldBase<T> : IField
     {
         if (_changed)
             MakeStringFields();
-        return CharEncoding.SelectedEncoding.GetByteCount(_stringField) + 1; // +1 for SOH
+        if (_tag < 0 || !CharEncoding.IsAsciiCompatible)
+            return CharEncoding.SelectedEncoding.GetByteCount(ToStringField()) + 1; // +1 for SOH
+
+        // Avoid building "tag=val": the tag digits and '=' are one byte each
+        int tagLength = 1;
+        for (int t = _tag; t >= 10; t /= 10)
+            tagLength++;
+        return tagLength + 1 + CharEncoding.ByteCount(_stringVal) + 1; // +1 for '=', +1 for SOH
     }
 
     /// <summary>
@@ -97,16 +104,19 @@ public abstract class FieldBase<T> : IField
     {
         if (_changed)
             MakeStringFields();
+        if (_tag < 0 || !CharEncoding.IsAsciiCompatible)
+            return CharEncoding.ByteSum(ToStringField()) + 1; // +1 for SOH
 
+        // Avoid building "tag=val": the tag digits and '=' are one byte each
         int sum = 0;
-
-        using ValueDisposable _ = CharEncoding.GetBytes(_stringField, out ReadOnlySpan<byte> array);
-        foreach (byte b in array)
+        int t = _tag;
+        do
         {
-            sum += b;
-        }
+            sum += '0' + t % 10;
+            t /= 10;
+        } while (t > 0);
 
-        return sum + 1; // +1 for SOH
+        return sum + '=' + CharEncoding.ByteSum(_stringVal) + 1; // +1 for SOH
     }
 
     //-----------------------------------
@@ -138,12 +148,12 @@ public abstract class FieldBase<T> : IField
     protected abstract string MakeString();
 
     /// <summary>
-    /// Set _stringVal (val only) and _stringField (tag=val)
+    /// Set _stringVal (val only) and clear _stringField (tag=val), which is rebuilt on demand
     /// </summary>
     private void MakeStringFields()
     {
         _stringVal = MakeString();
-        _stringField = Tag + "=" + _stringVal;
+        _stringField = null;
         _changed = false;
     }
 

@@ -34,7 +34,8 @@ internal class LogAdapter : ILogger, IDisposable
         }
     }
 
-    public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+    // A NullLog discards everything, so report disabled and let callers skip formatting entirely
+    public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None && _log is not NullLog;
 
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => default!;
 

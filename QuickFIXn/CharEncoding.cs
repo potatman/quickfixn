@@ -15,15 +15,66 @@ public static class CharEncoding
 
     public static System.Text.Encoding SelectedEncoding { get; private set; }
 
+    /// <summary>
+    /// True if every ASCII char encodes to one byte of the same value in SelectedEncoding
+    /// (iso-8859-1, utf-8, us-ascii, windows-1252, ...), which lets ByteCount/ByteSum skip encoding.
+    /// </summary>
+    private static bool _isAsciiCompatible;
+
+    internal static bool IsAsciiCompatible => _isAsciiCompatible;
+
     static CharEncoding()
     {
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-        SelectedEncoding = System.Text.Encoding.GetEncoding(DefaultCharEncoding);
+        Select(System.Text.Encoding.GetEncoding(DefaultCharEncoding));
     }
 
     public static void ResetToDefaultEncoding() => SetEncoding(DefaultCharEncoding);
 
-    public static void SetEncoding(string encoding) => SelectedEncoding = System.Text.Encoding.GetEncoding(encoding);
+    public static void SetEncoding(string encoding) => Select(System.Text.Encoding.GetEncoding(encoding));
+
+    private static void Select(System.Text.Encoding encoding)
+    {
+        char[] ascii = new char[128];
+        for (int i = 0; i < ascii.Length; i++)
+            ascii[i] = (char)i;
+        byte[] bytes = encoding.GetBytes(ascii);
+        bool compatible = bytes.Length == ascii.Length;
+        for (int i = 0; compatible && i < bytes.Length; i++)
+            compatible = bytes[i] == i;
+
+        _isAsciiCompatible = compatible;
+        SelectedEncoding = encoding;
+    }
+
+    /// <summary>
+    /// Number of bytes the chars encode to in SelectedEncoding
+    /// </summary>
+    internal static int ByteCount(ReadOnlySpan<char> chars)
+    {
+        if (_isAsciiCompatible && !chars.ContainsAnyExceptInRange((char)0, (char)0x7F))
+            return chars.Length;
+        return SelectedEncoding.GetByteCount(chars);
+    }
+
+    /// <summary>
+    /// Sum of the bytes the chars encode to in SelectedEncoding (for FIX checksums)
+    /// </summary>
+    internal static int ByteSum(ReadOnlySpan<char> chars)
+    {
+        int sum = 0;
+        if (_isAsciiCompatible && !chars.ContainsAnyExceptInRange((char)0, (char)0x7F))
+        {
+            foreach (char c in chars)
+                sum += c;
+            return sum;
+        }
+
+        using ValueDisposable _ = GetBytes(chars, out ReadOnlySpan<byte> bytes);
+        foreach (byte b in bytes)
+            sum += b;
+        return sum;
+    }
 
     /// <summary>
     /// Convert a string to a byte array using the current globally-set encoding.

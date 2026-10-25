@@ -1126,4 +1126,46 @@ public class MessageTests
             "8=FIX.4.2|9=91|35=B|34=2|49=TW|52=20111011-15:06:23.103|56=ISLD|148=headline|33=1|58=line1|354=3|355=uno|"
         ));
     }
+
+    private static string ValidHeartbeat(string testReqId)
+    {
+        QuickFix.FIX44.Heartbeat hb = new();
+        hb.Header.SetField(new SenderCompID("TW"));
+        hb.Header.SetField(new TargetCompID("ISLD"));
+        hb.Header.SetField(new MsgSeqNum(3));
+        hb.Header.SetField(new SendingTime(new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc)));
+        hb.SetField(new TestReqID(testReqId));
+        return hb.ConstructString(); // BodyLength and CheckSum computed by the field-based path
+    }
+
+    [Test]
+    public void FromString_Validate_AcceptsCorrectLengthAndCheckSum()
+    {
+        Assert.DoesNotThrow(() => new Message(ValidHeartbeat("abc"), validate: true));
+    }
+
+    [Test]
+    public void FromString_Validate_AgreesWithFieldBasedCheckSumForNonAsciiValues()
+    {
+        // iso-8859-1 'é' is one byte but outside ASCII, which exercises the encoded-bytes path
+        Assert.DoesNotThrow(() => new Message(ValidHeartbeat("café"), validate: true));
+    }
+
+    [Test]
+    public void FromString_Validate_RejectsWrongCheckSum()
+    {
+        string good = ValidHeartbeat("abc");
+        string bad = good.Substring(0, good.Length - 4) + (good[^4] == '0' ? "1" : "0") + good[^3..];
+        InvalidMessage e = Assert.Throws<InvalidMessage>(() => new Message(bad, validate: true))!;
+        Assert.That(e.Message, Does.Contain("Expected CheckSum="));
+    }
+
+    [Test]
+    public void FromString_Validate_RejectsWrongBodyLength()
+    {
+        string good = ValidHeartbeat("abc");
+        string bad = good.Replace(Message.SOH + "112=abc" + Message.SOH, Message.SOH + "112=abcd" + Message.SOH);
+        InvalidMessage e = Assert.Throws<InvalidMessage>(() => new Message(bad, validate: true))!;
+        Assert.That(e.Message, Does.Contain("Expected BodyLength="));
+    }
 }

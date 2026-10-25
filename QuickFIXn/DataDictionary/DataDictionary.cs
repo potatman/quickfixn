@@ -350,10 +350,10 @@ public class DataDictionary
             if (fld.HasEnums())
             {
                 if (fld.IsMultipleValueFieldWithEnums) {
-                    string[] splitted = field.ToString().Split(' ');
-
-                    if (splitted.Any(value => !fld.EnumDict.ContainsKey(value))) {
-                        throw new IncorrectTagValue(field.Tag);
+                    // (a loop rather than a lambda: capturing fld would allocate on every call)
+                    foreach (string value in field.ToString().Split(' ')) {
+                        if (!fld.EnumDict.ContainsKey(value))
+                            throw new IncorrectTagValue(field.Tag);
                     }
                 }
                 else if (!fld.EnumDict.ContainsKey(field.ToString()))

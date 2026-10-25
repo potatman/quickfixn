@@ -11,7 +11,9 @@ namespace QuickFix;
 /// Field container used by messages, groups, and composites
 /// </summary>
 public class FieldMap : IEnumerable<KeyValuePair<int, IField>> {
-    private SortedDictionary<int, IField> _fields = new();
+    // Array-backed and sorted by tag: messages hold few fields, so this beats a tree
+    // (no node object per field, no allocating traversal when enumerating)
+    private SortedList<int, IField> _fields = new();
 
     /// FIXME sorted dict is a hack to get quasi-correct field order
     private Dictionary<int, List<Group>> _groups = new();
@@ -57,7 +59,7 @@ public class FieldMap : IEnumerable<KeyValuePair<int, IField>> {
     {
         FieldOrder = src.FieldOrder;
 
-        _fields = new SortedDictionary<int, IField>(src._fields);
+        _fields = new SortedList<int, IField>(src._fields);
 
         _groups = new Dictionary<int, List<Group>>();
         foreach (KeyValuePair<int, List<Group>> g in src._groups)
@@ -267,10 +269,13 @@ public class FieldMap : IEnumerable<KeyValuePair<int, IField>> {
     /// </summary>
     /// <param name="grp">group to add</param>
     /// <param name="autoIncCounter">if true, auto-increment the counter, else leave it as-is</param>
-    internal void AddGroup(Group grp, bool autoIncCounter)
+    /// <param name="copy">
+    /// if true, store a clone, in case user code reuses the input object;
+    /// the parser passes false because it never touches a group again after adding it
+    /// </param>
+    internal void AddGroup(Group grp, bool autoIncCounter, bool copy = true)
     {
-        // copy, in case user code reuses input object
-        Group group = grp.Clone();
+        Group group = copy ? grp.Clone() : grp;
 
         if (_groups.TryGetValue(group.CounterField, out var groupList))
         {
@@ -538,8 +543,9 @@ public class FieldMap : IEnumerable<KeyValuePair<int, IField>> {
     public int CalculateTotal()
     {
         int total = 0;
-        foreach (IField field in _fields.Values)
+        for (int i = 0; i < _fields.Count; i++)
         {
+            IField field = _fields.GetValueAtIndex(i);
             if (field.Tag != Fields.Tags.CheckSum)
                 total += field.GetTotal();
         }
@@ -561,8 +567,9 @@ public class FieldMap : IEnumerable<KeyValuePair<int, IField>> {
     public int CalculateLength()
     {
         int total = 0;
-        foreach (IField field in _fields.Values)
+        for (int i = 0; i < _fields.Count; i++)
         {
+            IField field = _fields.GetValueAtIndex(i);
             if (field.Tag != Tags.BeginString
                 && field.Tag != Tags.BodyLength
                 && field.Tag != Tags.CheckSum)
@@ -624,8 +631,9 @@ public class FieldMap : IEnumerable<KeyValuePair<int, IField>> {
             }
         }
 
-        foreach (IField field in _fields.Values)
+        for (int i = 0; i < _fields.Count; i++)
         {
+            IField field = _fields.GetValueAtIndex(i);
             if (groupCounterTags.Contains(field.Tag))
                 continue;
             if (preFields.Contains(field.Tag))
