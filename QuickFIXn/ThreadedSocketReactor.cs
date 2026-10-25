@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
@@ -91,6 +92,25 @@ public class ThreadedSocketReactor
         }
     }
 
+    /// <summary>
+    /// True if SocketCountPerHost is set and the client's remote address already has that many connections
+    /// </summary>
+    private bool IsConnectionLimitReached(TcpClient client)
+    {
+        if (!_socketSettings.SocketCountPerHost.HasValue)
+            return false;
+
+        string address = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
+        lock (_sync)
+        {
+            if (_clientThreads.Values.Count(c => c.SourceAddress == address) < _socketSettings.SocketCountPerHost)
+                return false;
+        }
+
+        _nonSessionLog.Log(LogLevel.Warning, "Limit of connections per host was reached for '{Address}'", address);
+        return true;
+    }
+
     private void AcceptTcpClientCallback( IAsyncResult ar )
     {
         // If socket is in process of shutting down then a client may
@@ -103,16 +123,23 @@ public class ThreadedSocketReactor
         try
         {
             TcpClient client = listener.EndAcceptTcpClient(ar);
-            ApplySocketOptions(client, _socketSettings);
-            ClientHandlerThread t = new ClientHandlerThread(
-                client, _nextClientId++, _socketSettings, _acceptorSocketDescriptor, _loggerFactory);
-            t.Exited += OnClientHandlerThreadExited;
-            lock (_sync)
+            if (IsConnectionLimitReached(client))
             {
-                _clientThreads.Add(t.Id, t);
+                client.Dispose();
             }
-            // FIXME set the client thread's exception handler here
-            t.Start();
+            else
+            {
+                ApplySocketOptions(client, _socketSettings);
+                ClientHandlerThread t = new ClientHandlerThread(
+                    client, _nextClientId++, _socketSettings, _acceptorSocketDescriptor, _loggerFactory);
+                t.Exited += OnClientHandlerThreadExited;
+                lock (_sync)
+                {
+                    _clientThreads.Add(t.Id, t);
+                }
+                // FIXME set the client thread's exception handler here
+                t.Start();
+            }
         }
         catch (Exception e)
         {

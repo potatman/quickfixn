@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System;
 using QuickFix.Logger;
@@ -26,6 +27,7 @@ internal class ClientHandlerThread : IResponder, IDisposable
     internal event ExitedEventHandler? Exited;
 
     public long Id { get; private set; }
+    public string SourceAddress { get; private set; }
 
     private Thread? _thread = null;
     private volatile bool _isShutdownRequested = false;
@@ -39,6 +41,7 @@ internal class ClientHandlerThread : IResponder, IDisposable
         IQuickFixLoggerFactory loggerFactory
     ) {
         Id = clientId;
+        SourceAddress = ((IPEndPoint)tcpClient.Client.RemoteEndPoint!).Address.ToString();
         _socketReader = new SocketReader(tcpClient, socketSettings, this, acceptorDescriptor, loggerFactory);
     }
 

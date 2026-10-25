@@ -59,6 +59,11 @@ public class SocketSettings : ICloneable
     public int? SocketSendTimeout { get; internal set; }
 
     /// <summary>
+    /// Limit of concurrent acceptor connections per remote host (address)
+    /// </summary>
+    public int? SocketCountPerHost { get; internal set; }
+
+    /// <summary>
     /// Gets a value that specifies whether the proxy server settings should be ignored.
     /// </summary>
     /// <value>
@@ -182,6 +187,9 @@ public class SocketSettings : ICloneable
 
         if (settingsDictionary.Has(SessionSettings.SOCKET_RECEIVE_TIMEOUT))
             SocketReceiveTimeout = settingsDictionary.GetInt(SessionSettings.SOCKET_RECEIVE_TIMEOUT);
+
+        if (settingsDictionary.Has(SessionSettings.SOCKET_COUNT_PER_HOST))
+            SocketCountPerHost = settingsDictionary.GetInt(SessionSettings.SOCKET_COUNT_PER_HOST);
 
         if (settingsDictionary.Has(SessionSettings.SOCKET_SEND_TIMEOUT))
             SocketSendTimeout = settingsDictionary.GetInt(SessionSettings.SOCKET_SEND_TIMEOUT);
