@@ -104,8 +104,13 @@ public static class Program
         bool done = clientApp.AllReceived.Wait(TimeSpan.FromMinutes(5));
         Result result = m.Stop(payload.Length, clientApp.Received, done);
 
-        initiator.Stop(force: true);
+        // Close our end first and let the initiator's reader thread notice. Stopping the initiator while the
+        // socket is still open leaves that thread running, and it later logs to an already-disposed FileLog
+        // (pre-existing QuickFIX/n shutdown race; crashes the process with file logging).
+        server.Close();
         listener.Stop();
+        SpinWait.SpinUntil(() => !initiator.IsLoggedOn, TimeSpan.FromSeconds(5));
+        initiator.Stop(force: true);
         return result;
     }
 
