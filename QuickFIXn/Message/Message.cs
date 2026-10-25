@@ -27,6 +27,11 @@ public class Message : FieldMap
     public Header Header { get; }
     public Trailer Trailer { get; }
 
+    /// <summary>
+    /// The raw FIX string this message was parsed from (set by FromString)
+    /// </summary>
+    public string? RawMessage { get; private set; }
+
     public Message()
     {
         Header = new Header();
@@ -395,6 +400,9 @@ public class Message : FieldMap
         bool ignoreBody = false)
     {
         Clear();
+
+        // Set the RawMessage before doing anything.
+        RawMessage = msgstr;
 
         bool expectingHeader = true;
         bool expectingBody = true;
